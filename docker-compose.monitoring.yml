@@ -1,0 +1,145 @@
+name: monitoring
+
+# Tidak ada host port yang dipublikasikan. Nginx harus bergabung ke network
+# eksternal monitoring-proxy untuk meneruskan trafik HTTPS ke dashboard.
+x-default-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # Satu-satunya service yang memegang docker.sock. Ia hanya meneruskan API
+  # read-only yang dibutuhkan Beszel dan Dozzle; tidak memiliki host port.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.4.2
+    restart: unless-stopped
+    privileged: true # Diperlukan proxy untuk mengakses socket Docker pada host.
+    environment:
+      CONTAINERS: "1"
+      INFO: "1"
+      POST: "0"
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring-internal
+    mem_limit: 32m
+    cpus: "0.10"
+    pids_limit: 64
+    logging: *default-logging
+
+  # Dashboard metrik dan alert. Image dipin agar deploy reproducible.
+  beszel:
+    image: henrygd/beszel:0.18.7
+    restart: unless-stopped
+    expose:
+      - "8090"
+    environment:
+      TZ: Asia/Jakarta
+      # Wajib diganti menjadi URL HTTPS final bila diproxy ke publik.
+      APP_URL: "${BESZEL_APP_URL:-http://127.0.0.1:8090}"
+    volumes:
+      - beszel_data:/beszel_data
+      - beszel_socket:/beszel_socket
+    networks:
+      - monitoring-internal
+      - monitoring-proxy
+    mem_limit: 96m
+    cpus: "0.25"
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+  # Log realtime. Tidak memiliki docker.sock; koneksi hanya menuju proxy yang
+  # membatasi Docker API. Aksi dan shell Dozzle tetap nonaktif secara default.
+  dozzle:
+    image: amir20/dozzle:v10.6.11
+    restart: unless-stopped
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    expose:
+      - "8080"
+    environment:
+      TZ: Asia/Jakarta
+      DOZZLE_LEVEL: info
+      DOZZLE_REMOTE_HOST: "tcp://docker-socket-proxy:2375|docker-host"
+    volumes:
+      - dozzle_data:/data
+    networks:
+      - monitoring-internal
+      - monitoring-proxy
+    mem_limit: 64m
+    cpus: "0.20"
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  # Agent diletakkan pada profile terpisah agar Hub dapat dikonfigurasi lebih
+  # dahulu. Setelah KEY dan TOKEN di .env terisi, jalankan dengan --profile agent.
+  beszel-agent:
+    image: henrygd/beszel-agent:0.18.7
+    restart: unless-stopped
+    profiles: ["agent"]
+    depends_on:
+      beszel:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
+    environment:
+      TZ: Asia/Jakarta
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: http://beszel:8090
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      KEY: "${BESZEL_AGENT_KEY:-}"
+      TOKEN: "${BESZEL_AGENT_TOKEN:-}"
+    volumes:
+      - beszel_agent_data:/var/lib/beszel-agent
+      - beszel_socket:/beszel_socket
+    networks:
+      - monitoring-internal
+    mem_limit: 64m
+    cpus: "0.15"
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/agent", "health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+networks:
+  # Agent, Hub, Dozzle, dan socket proxy berkomunikasi di sini.
+  monitoring-internal:
+    name: monitoring_internal
+  # Harus sudah dibuat dan juga di-attach ke container Nginx publik.
+  monitoring-proxy:
+    external: true
+    name: monitoring-proxy
+
+volumes:
+  # Nama dipertahankan agar data Beszel dari file sebelumnya tidak hilang.
+  beszel_data:
+    name: infra_beszel_data
+  beszel_agent_data:
+    name: infra_beszel_agent_data
+  beszel_socket:
+    name: infra_beszel_socket
+  dozzle_data:
+    name: infra_dozzle_data
