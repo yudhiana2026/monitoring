@@ -96,6 +96,7 @@ services:
   # dahulu. Setelah KEY dan TOKEN di .env terisi, jalankan dengan --profile agent.
   beszel-agent:
     image: henrygd/beszel-agent:0.18.7
+    container_name: monitoring-beszel-agent
     restart: unless-stopped
     profiles: ["agent"]
     depends_on:
