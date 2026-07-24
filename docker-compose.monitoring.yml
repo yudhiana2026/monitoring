@@ -13,7 +13,7 @@ services:
   # Satu-satunya service yang memegang docker.sock. Ia hanya meneruskan API
   # read-only yang dibutuhkan Beszel dan Dozzle; tidak memiliki host port.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.4.2
+    image: ghcr.io/tecnativa/docker-socket-proxy:0.4.2
     restart: unless-stopped
     privileged: true # Diperlukan proxy untuk mengakses socket Docker pada host.
     environment:
