@@ -2,11 +2,12 @@ name: monitoring
 
 # Tidak ada host port yang dipublikasikan. Nginx harus bergabung ke network
 # eksternal monitoring-proxy untuk meneruskan trafik HTTPS ke dashboard.
-x-default-logging: &default-logging
-  driver: local
-  options:
-    max-size: "10m"
-    max-file: "3"
+x-logging-defaults: &logging-defaults
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   # Satu-satunya service yang memegang docker.sock. Ia hanya meneruskan API
@@ -27,7 +28,7 @@ services:
     mem_limit: 32m
     cpus: "0.10"
     pids_limit: 64
-    logging: *default-logging
+    <<: *logging-defaults
 
   # Dashboard metrik dan alert. Image dipin agar deploy reproducible.
   beszel:
@@ -44,7 +45,7 @@ services:
       - beszel_socket:/beszel_socket
     networks:
       - monitoring-internal
-      - monitoring-proxy
+      - infra-network
     mem_limit: 96m
     cpus: "0.25"
     pids_limit: 128
@@ -54,7 +55,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    logging: *default-logging
+    <<: *logging-defaults
 
   # Log realtime. Tidak memiliki docker.sock; koneksi hanya menuju proxy yang
   # membatasi Docker API. Aksi dan shell Dozzle tetap nonaktif secara default.
@@ -74,7 +75,7 @@ services:
       - dozzle_data:/data
     networks:
       - monitoring-internal
-      - monitoring-proxy
+      - infra-network
     mem_limit: 64m
     cpus: "0.20"
     pids_limit: 128
@@ -86,7 +87,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    logging: *default-logging
+    <<: *logging-defaults
 
   # Agent diletakkan pada profile terpisah agar Hub dapat dikonfigurasi lebih
   # dahulu. Setelah KEY dan TOKEN di .env terisi, jalankan dengan --profile agent.
@@ -122,16 +123,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    logging: *default-logging
+    <<: *logging-defaults
 
 networks:
   # Agent, Hub, Dozzle, dan socket proxy berkomunikasi di sini.
   monitoring-internal:
-    name: monitoring_internal
+    name: monitoring-internal
   # Harus sudah dibuat dan juga di-attach ke container Nginx publik.
-  monitoring-proxy:
+  infra-network:
     external: true
-    name: monitoring-proxy
+    name: infra-network
 
 volumes:
   # Nama dipertahankan agar data Beszel dari file sebelumnya tidak hilang.
